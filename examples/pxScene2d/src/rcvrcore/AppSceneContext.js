@@ -21,8 +21,10 @@ var ClearTimeout = isDuk?timers.clearTimeout:clearTimeout;
 var SetInterval = isDuk?timers.setInterval:setInterval;
 var ClearInterval = isDuk?timers.clearInterval:clearInterval;
 
+
 var http_wrap = require('rcvrcore/http_wrap');
 var https_wrap = require('rcvrcore/https_wrap');
+var ws_wrap = (isDuk)?"":require('rcvrcore/ws_wrap');
 
 function AppSceneContext(params) {
 
@@ -56,9 +58,10 @@ function AppSceneContext(params) {
   //array to store the list of pending timers
   this.timers = [];
   this.timerIntervals = [];
-
+  this.webSocketManager = null;
   log.message(4, "[[[NEW AppSceneContext]]]: " + this.packageUrl);
 }
+
 
 AppSceneContext.prototype.loadScene = function() {
   //log.info("loadScene() - begins    on ctx: " + getContextID() );
@@ -105,7 +108,7 @@ this.innerscene.on('onSceneTerminate', function (e) {
     if ((undefined != this.innerscene) && (null != this.innerscene))
     {
       this.innerscene.api = null;
-    } 
+    }
     this.innerscene = null;
     if ((undefined != this.sandbox) && (null != this.sandbox))
     {
@@ -131,7 +134,7 @@ this.innerscene.on('onSceneTerminate', function (e) {
       for(var k in this.sandbox.importTracking) { delete this.sandbox.importTracking[k]; }
       this.sandbox.importTracking = null;
       for(var k in this.sandbox) { delete this.sandbox[k]; }
-    } 
+    }
     this.sandbox = null;
     for(var xmodule in this.xmoduleMap) {
       this.xmoduleMap[xmodule].freeResources();
@@ -151,6 +154,12 @@ this.innerscene.on('onSceneTerminate', function (e) {
     if (null != this.sceneWrapper)
       this.sceneWrapper.close();
     this.sceneWrapper = null;
+    if (null != this.webSocketManager)
+    {
+       this.webSocketManager.clearConnections();
+       delete this.webSocketManager;
+    }
+    this.webSocketManager = null;
     this.rpcController = null;
   }.bind(this));
 
@@ -443,28 +452,28 @@ AppSceneContext.prototype.runScriptInNewVMContext = function (packageUri, module
   var self = this;
   var newSandbox;
   try {
-    var requireMethod = function (pkg) {
-      log.message(3, "old use of require not supported: " + pkg);
-      // TODO: remove
-      return requireIt(pkg);
-    };
+      var requireMethod = function (pkg) {
+        log.message(3, "old use of require not supported: " + pkg);
+        // TODO: remove
+        return requireIt(pkg);
+      };
 
-    var requireFileOverridePath = process.env.PXSCENE_REQUIRE_ENABLE_FILE_PATH;
-    var requireEnableFilePath = "/tmp/";
-    if (process.env.HOME && process.env.HOME !== '') {
-      requireEnableFilePath = process.env.HOME;
-    }
-    if (requireFileOverridePath && requireFileOverridePath !== ''){
-      requireEnableFilePath = requireFileOverridePath;
-    }
+      var requireFileOverridePath = process.env.PXSCENE_REQUIRE_ENABLE_FILE_PATH;
+      var requireEnableFilePath = "/tmp/";
+      if (process.env.HOME && process.env.HOME !== '') {
+        requireEnableFilePath = process.env.HOME;
+      }
+      if (requireFileOverridePath && requireFileOverridePath !== '') {
+        requireEnableFilePath = requireFileOverridePath;
+      }
 
-    var fs = require("fs");
-    var requireEnableFile = requireEnableFilePath + "/.pxsceneEnableRequire";
-    if (fs.existsSync(requireEnableFile)) {
-      console.log("enabling pxscene require support");
-      requireMethod = require;
-    }
-    
+      var fs = require("fs");
+      var requireEnableFile = requireEnableFilePath + "/.pxsceneEnableRequire";
+      if (fs.existsSync(requireEnableFile)) {
+        console.log("enabling pxscene require support");
+        requireMethod = require;
+      }
+
     newSandbox = {
       sandboxName: "InitialSandbox",
       xmodule: xModule,
@@ -475,36 +484,36 @@ AppSceneContext.prototype.runScriptInNewVMContext = function (packageUri, module
       queryStringModule: require("querystring"),
       theNamedContext: "Sandbox: " + uri,
       Buffer: Buffer,
-      require: requireMethod,
-      global: global,
-      setTimeout: function (callback, after, arg1, arg2, arg3) {
-        //pass the timers list to callback function on timeout
-        var timerId = SetTimeout(setTimeoutCallback, after, this.timers, function() { callback(arg1, arg2, arg3)});
-        this.timers.push(timerId);
-        return timerId;
-      }.bind(this),
-      clearTimeout: function (timer) {
-        var index = this.timers.indexOf(timer);
-        if (index != -1)
-        {
-          this.timers.splice(index,1);
-        }
-        ClearTimeout(timer);
-      }.bind(this),
-      setInterval: function (callback, repeat, arg1, arg2, arg3) {
-        var intervalId = SetInterval(callback, repeat, arg1, arg2, arg3);
-        this.timerIntervals.push(intervalId);
-        return intervalId;
-      }.bind(this),
-      clearInterval: function (timer) {
-        var index = this.timerIntervals.indexOf(timer);
-        if (index != -1)
-        {
-          this.timerIntervals.splice(index,1);
-        }
-        ClearInterval(timer);
-      }.bind(this),
-      importTracking: {}
+        require: requireMethod,
+        global: global,
+        setTimeout: function (callback, after, arg1, arg2, arg3) {
+          //pass the timers list to callback function on timeout
+          var timerId = SetTimeout(setTimeoutCallback, after, this.timers, function() { callback(arg1, arg2, arg3)});
+          this.timers.push(timerId);
+          return timerId;
+        }.bind(this),
+        clearTimeout: function (timer) {
+          var index = this.timers.indexOf(timer);
+          if (index != -1)
+          {
+            this.timers.splice(index,1);
+          }
+          ClearTimeout(timer);
+        }.bind(this),
+        setInterval: function (callback, repeat, arg1, arg2, arg3) {
+          var intervalId = SetInterval(callback, repeat, arg1, arg2, arg3);
+          this.timerIntervals.push(intervalId);
+          return intervalId;
+        }.bind(this),
+        clearInterval: function (timer) {
+          var index = this.timerIntervals.indexOf(timer);
+          if (index != -1)
+          {
+            this.timerIntervals.splice(index,1);
+          }
+          ClearInterval(timer);
+        }.bind(this),
+        importTracking: {}
     }; // end sandbox
 
     // - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -552,9 +561,9 @@ if (false) {
 
       //console.log("Main Module: readyPromise=" + xModule.moduleReadyPromise);
       if( !xModule.hasOwnProperty('moduleReadyPromise') || xModule.moduleReadyPromise === null ) {
-//        this.container.makeReady(true); // DEPRECATED ?
+        //        this.container.makeReady(true); // DEPRECATED ?
 
-//        this.innerscene.api = {isReady:true};
+        //        this.innerscene.api = {isReady:true};
         this.makeReady(true,{});
       }
       else
@@ -566,7 +575,7 @@ if (false) {
         {
           self.innerscene.api = xModule.exports;
 
-          thisMakeReady(true,xModule.exports);
+          thisMakeReady(true, xModule.exports);
 
         }).catch( function(err)
         {
@@ -615,7 +624,7 @@ AppSceneContext.prototype.getPackageBaseFilePath = function() {
       fullPath = this.defaultBaseUri + pkgPart;
     } else if(platform === 'win32' && pkgPart.charAt(1) === ':' ) {
       // Windows OS and using drive name, take the pkg part as the file path
-      fullPath = pkgPart;   
+      fullPath = pkgPart;
     } else {
       fullPath = this.defaultBaseUri + "/" + pkgPart;
     }
@@ -680,12 +689,12 @@ AppSceneContext.prototype.resolveModulePath = function(filePath, currentXModule)
 // duktape merge hack
 
 if (isDuk) {
-    AppSceneContext.prototype.include = function(filePath, currentXModule) {
-        log.message(4, ">>> include(" + filePath + ") for " + currentXModule.name + " <<<");
-        var _this = this;
-        var origFilePath = filePath;
-        
-        return new Promise(function (onImportComplete, reject) {
+AppSceneContext.prototype.include = function(filePath, currentXModule) {
+  log.message(4, ">>> include(" + filePath + ") for " + currentXModule.name + " <<<");
+  var _this = this;
+  var origFilePath = filePath;
+
+  return new Promise(function (onImportComplete, reject) {
                            if( filePath === 'px' || filePath === 'url' || filePath === 'querystring') {
                            // built-ins
                            var modData = require(filePath);
@@ -698,10 +707,10 @@ if (isDuk) {
                            } else if( filePath === 'net' /*|| filePath === 'ws'*/ ||  filePath === 'htmlparser') {
                            //modData = require('rcvrcore/' + filePath + '_wrap');
                            //onImportComplete([modData, origFilePath]);
-                           console.log("Not permitted to use the module " + filePath);
-                           reject("include failed due to module not permitted");
-                           return;
-                           } 
+        console.log("Not permitted to use the module " + filePath);
+        reject("include failed due to module not permitted");
+        return;
+      }
                            else if (filePath === 'ws') {
                             console.log("creating websocket instance")
                             modData = websocket;
@@ -806,6 +815,23 @@ AppSceneContext.prototype.include = function(filePath, currentXModule) {
       reject("include failed due to module not permitted");
       return;
     } else if( filePath === 'net' || filePath === 'ws' ) {
+      if (!isDuk && filePath === 'ws')
+      {
+        var wsdata = require('rcvrcore/' + filePath + '_wrap');
+        _this.webSocketManager = new wsdata();
+
+        var WebSocket = (function() {
+          var context = this;
+          function WebSocket(address, protocol, options) {
+            var client = context.webSocketManager.WebSocket(address, protocol, options);
+            return client;
+          }
+          return WebSocket;
+         }.bind(_this))();
+        modData = WebSocket;
+        onImportComplete([modData, origFilePath]);
+        return;
+      }
       modData = require('rcvrcore/' + filePath + '_wrap');
       onImportComplete([modData, origFilePath]);
       return;
