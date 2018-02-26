@@ -539,13 +539,6 @@ void rtObjectWrapper::createFromObjectReference(duk_context *ctx, const rtObject
 
         pushProxyForObject(ctx, ref);
 
-        if (duk_pcall(ctx, 1) != 0) {
-          duv_dump_error(ctx, -1);
-          assert(0);
-        }
-
-        assert(duk_is_object(ctx, -1));
-
         // [func obj]
 
         if (duk_pcall(ctx, 1) != 0) {
